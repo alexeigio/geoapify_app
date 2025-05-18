@@ -46,6 +46,18 @@ class _MapScreenState extends State<MapScreen> {
   Position? currentPosition;
   List<Place> places = [];
   bool isLoading = false;
+  String? selectedCategory; // <-- Puede ser null al inicio
+
+  // Lista de categorías y nombres para los botones
+  final List<Map<String, String>> categories = [
+    {'key': 'catering.restaurant', 'label': 'Restaurantes'},
+    {'key': 'catering.cafe', 'label': 'Cafés'},
+    {'key': 'healthcare.hospital', 'label': 'Hospitales'},
+    {'key': 'tourism.attraction', 'label': 'Atracciones'},
+    // Agrega más categorías aquí si quieres
+  ];
+
+  List<LatLng> routePoints = [];
 
   @override
   void initState() {
@@ -81,16 +93,26 @@ class _MapScreenState extends State<MapScreen> {
     setState(() {});
   }
 
-  Future<void> _handleTap(LatLng point) async {
+  Future<void> _searchPlacesByCategory(String category) async {
+    if (selectedCategory == category) {
+      // Si ya está seleccionada, deselecciona y limpia lugares
+      setState(() {
+        selectedCategory = null;
+        places.clear();
+      });
+      return;
+    }
+
+    if (currentPosition == null) return;
     setState(() {
       isLoading = true;
+      selectedCategory = category;
     });
 
-    // Cambia la categoría aquí, por ejemplo: catering.restaurant para restaurantes
     final url =
-        'https://api.geoapify.com/v2/places?categories=catering.restaurant'
-        '&filter=circle:${point.longitude},${point.latitude},1000'
-        '&bias=proximity:${point.longitude},${point.latitude}'
+        'https://api.geoapify.com/v2/places?categories=$category'
+        '&filter=circle:${currentPosition!.longitude},${currentPosition!.latitude},1000'
+        '&bias=proximity:${currentPosition!.longitude},${currentPosition!.latitude}'
         '&limit=20'
         '&apiKey=$apiKey';
 
@@ -108,6 +130,45 @@ class _MapScreenState extends State<MapScreen> {
         isLoading = false;
       });
       _showError('Error al cargar los lugares.');
+    }
+  }
+
+  Future<void> _getRouteToPlace(Place place) async {
+    if (currentPosition == null) return;
+
+    setState(() {
+      routePoints = []; // Limpia la ruta anterior
+    });
+
+    final from = '${currentPosition!.latitude},${currentPosition!.longitude}';
+    final to = '${place.lat},${place.lon}';
+    final url =
+        'https://api.geoapify.com/v1/routing?waypoints=$from|$to&mode=drive&format=geojson&apiKey=$apiKey';
+
+    final response = await http.get(Uri.parse(url));
+    if (response.statusCode == 200) {
+      final data = json.decode(response.body);
+      final features = data['features'] as List;
+      if (features.isNotEmpty) {
+        final geometry = features[0]['geometry'];
+        if (geometry['type'] == 'LineString') {
+          setState(() {
+            routePoints = (geometry['coordinates'] as List)
+                .map<LatLng>((c) => LatLng(c[1], c[0]))
+                .toList();
+          });
+        } else if (geometry['type'] == 'MultiLineString') {
+          // Si la geometría es MultiLineString, concatena todos los puntos
+          setState(() {
+            routePoints = (geometry['coordinates'] as List)
+                .expand((line) => (line as List)
+                    .map<LatLng>((c) => LatLng(c[1], c[0])))
+                .toList();
+          });
+        }
+      }
+    } else {
+      _showError('No se pudo calcular la ruta.');
     }
   }
 
@@ -131,7 +192,10 @@ class _MapScreenState extends State<MapScreen> {
             options: MapOptions(
               initialCenter: LatLng(currentPosition!.latitude, currentPosition!.longitude),
               initialZoom: 13.0,
-              onTap: (tapPosition, point) => _handleTap(point),
+              onTap: (tapPosition, point) {
+                // Si quieres que al tocar el mapa busque de la categoría seleccionada:
+                _searchPlacesByCategory(selectedCategory!);
+              },
             ),
             children: [
               TileLayer(
@@ -140,14 +204,12 @@ class _MapScreenState extends State<MapScreen> {
               ),
               MarkerLayer(
                 markers: [
-                  // Marcador de tu ubicación
                   Marker(
                     point: LatLng(currentPosition!.latitude, currentPosition!.longitude),
                     width: 60,
                     height: 60,
                     child: Icon(Icons.person_pin_circle, color: Colors.blue, size: 40),
                   ),
-                  // Marcadores de lugares
                   ...places.map((place) => Marker(
                     point: LatLng(place.lat, place.lon),
                     width: 80,
@@ -159,6 +221,19 @@ class _MapScreenState extends State<MapScreen> {
                           builder: (_) => AlertDialog(
                             title: Text(place.name),
                             content: Text(place.address),
+                            actions: [
+                              TextButton(
+                                onPressed: () {
+                                  Navigator.pop(context);
+                                  _getRouteToPlace(place);
+                                },
+                                child: Text('Cómo llegar'),
+                              ),
+                              TextButton(
+                                onPressed: () => Navigator.pop(context),
+                                child: Text('Cerrar'),
+                              ),
+                            ],
                           ),
                         );
                       },
@@ -167,22 +242,78 @@ class _MapScreenState extends State<MapScreen> {
                   )),
                 ],
               ),
+              PolylineLayer(
+                polylines: routePoints.isNotEmpty
+                    ? [
+                        Polyline<Object>(
+                          points: routePoints,
+                          color: Colors.blue,
+                          strokeWidth: 5,
+                        ),
+                      ]
+                    : <Polyline<Object>>[],
+              ),
             ],
+          ),
+          // Botones de categorías arriba
+          Positioned(
+            top: 40,
+            left: 10,
+            right: 10,
+            child: SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: Row(
+                children: categories.map((cat) {
+                  final isSelected = selectedCategory == cat['key'];
+                  return Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 4.0),
+                    child: ElevatedButton(
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: isSelected ? Colors.blue : Colors.grey,
+                      ),
+                      onPressed: () => _searchPlacesByCategory(cat['key']!),
+                      child: Text(cat['label']!),
+                    ),
+                  );
+                }).toList(),
+              ),
+            ),
           ),
           if (isLoading)
             Center(child: CircularProgressIndicator()),
         ],
       ),
-      floatingActionButton: FloatingActionButton(
-        onPressed: () {
-          if (currentPosition != null) {
-            mapController.move(
-              LatLng(currentPosition!.latitude, currentPosition!.longitude),
-              13.0,
-            );
-          }
-        },
-        child: Icon(Icons.my_location),
+      floatingActionButton: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (routePoints.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 10.0),
+              child: FloatingActionButton(
+                heroTag: 'clearRoute',
+                backgroundColor: Colors.red,
+                onPressed: () {
+                  setState(() {
+                    routePoints.clear();
+                  });
+                },
+                child: Icon(Icons.clear),
+                tooltip: 'Quitar ruta',
+              ),
+            ),
+          FloatingActionButton(
+            heroTag: 'myLocation',
+            onPressed: () {
+              if (currentPosition != null) {
+                mapController.move(
+                  LatLng(currentPosition!.latitude, currentPosition!.longitude),
+                  13.0,
+                );
+              }
+            },
+            child: Icon(Icons.my_location),
+          ),
+        ],
       ),
     );
   }
