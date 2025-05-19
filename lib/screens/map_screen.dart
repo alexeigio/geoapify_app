@@ -119,9 +119,9 @@ class _MapScreenState extends State<MapScreen> {
     setState(() {});
   }
 
+  // Cambia esta función para buscar cerca de la marca si existe, si no de la ubicación real
   Future<void> _searchPlacesByCategory(String category) async {
     if (selectedCategory == category) {
-      // Si ya está seleccionada, deselecciona y limpia lugares
       setState(() {
         selectedCategory = null;
         places.clear();
@@ -129,7 +129,16 @@ class _MapScreenState extends State<MapScreen> {
       return;
     }
 
-    if (currentPosition == null) return;
+    LatLng? searchPoint;
+    if (selectedPoint != null) {
+      searchPoint = selectedPoint;
+    } else if (currentPosition != null) {
+      searchPoint = LatLng(currentPosition!.latitude, currentPosition!.longitude);
+    } else {
+      _showError('No hay punto de búsqueda disponible.');
+      return;
+    }
+
     setState(() {
       isLoading = true;
       selectedCategory = category;
@@ -137,8 +146,7 @@ class _MapScreenState extends State<MapScreen> {
 
     final url =
         'https://api.geoapify.com/v2/places?categories=$category'
-        '&filter=circle:${currentPosition!.longitude},${currentPosition!.latitude},1000'
-        '&bias=proximity:${currentPosition!.longitude},${currentPosition!.latitude}'
+        '&filter=circle:${searchPoint?.longitude},${searchPoint?.latitude},1000'
         '&limit=20'
         '&apiKey=$apiKey';
 
@@ -269,12 +277,13 @@ class _MapScreenState extends State<MapScreen> {
               ),
               MarkerLayer(
                 markers: [
-                  Marker(
-                    point: LatLng(currentPosition!.latitude, currentPosition!.longitude),
-                    width: 60,
-                    height: 60,
-                    child: Icon(Icons.person_pin_circle, color: Colors.blue, size: 40),
-                  ),
+                  if (selectedPoint == null && currentPosition != null)
+                    Marker(
+                      point: LatLng(currentPosition!.latitude, currentPosition!.longitude),
+                      width: 60,
+                      height: 60,
+                      child: Icon(Icons.person_pin_circle, color: Colors.blue, size: 40),
+                    ),
                   if (selectedPoint != null)
                     Marker(
                       point: selectedPoint!,
@@ -389,7 +398,7 @@ class _MapScreenState extends State<MapScreen> {
           ),
           if (isLoading)
             Center(child: CircularProgressIndicator()),
-          // 2. En tu build(), agrega el menú en la parte superior derecha:
+          // Menú de estilos de mapa abajo centrado
           Positioned(
             bottom: 20,
             left: 0,
@@ -432,6 +441,24 @@ class _MapScreenState extends State<MapScreen> {
       floatingActionButton: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
+          if (selectedPoint != null)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 10.0),
+              child: FloatingActionButton(
+                heroTag: 'clearSelection',
+                backgroundColor: Colors.orange,
+                onPressed: () {
+                  setState(() {
+                    selectedPoint = null;
+                    places.clear();
+                    selectedCategory = null;
+                    routePoints.clear();
+                  });
+                },
+                child: Icon(Icons.highlight_off),
+                tooltip: 'Borrar selección',
+              ),
+            ),
           if (routePoints.isNotEmpty)
             Padding(
               padding: const EdgeInsets.only(bottom: 10.0),
@@ -458,14 +485,6 @@ class _MapScreenState extends State<MapScreen> {
               }
             },
             child: Icon(Icons.my_location),
-          ),
-          FloatingActionButton(
-            heroTag: 'searchPlaces',
-            onPressed: (selectedPoint != null && selectedCategory != null)
-                ? () => _searchPlacesNearPoint()
-                : null,
-            child: Icon(Icons.search),
-            tooltip: 'Buscar lugares cercanos',
           ),
         ],
       ),
