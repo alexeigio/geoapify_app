@@ -54,10 +54,36 @@ class _MapScreenState extends State<MapScreen> {
     {'key': 'catering.cafe', 'label': 'Cafés'},
     {'key': 'healthcare.hospital', 'label': 'Hospitales'},
     {'key': 'tourism.attraction', 'label': 'Atracciones'},
-    // Agrega más categorías aquí si quieres
+    {'key': 'commercial.supermarket', 'label': 'Supermercados'},
+    // Puedes agregar más de la documentación de Geoapify
   ];
 
   List<LatLng> routePoints = [];
+  LatLng? selectedPoint;
+
+  String mapStyle = 'osm-carto'; // Normal por defecto
+
+  // 1. Agrega más estilos a tu mapa:
+  final Map<String, String> mapStyles = {
+    'OSM Carto': 'osm-carto',
+    'OSM Bright': 'osm-bright',
+    'OSM Bright Grey': 'osm-bright-grey',
+    'OSM Bright Smooth': 'osm-bright-smooth',
+    'Klokantech Basic': 'klokantech-basic',
+    'OSM Liberty': 'osm-liberty',
+    'Maptiler 3D': 'maptiler-3d',
+    'Toner': 'toner',
+    'Toner Grey': 'toner-grey',
+    'Positron': 'positron',
+    'Positron Blue': 'positron-blue',
+    'Positron Red': 'positron-red',
+    'Dark Matter': 'dark-matter',
+    'Dark Matter Brown': 'dark-matter-brown',
+    'Dark Matter Grey': 'dark-matter-dark-grey',
+    'Dark Matter Purple': 'dark-matter-dark-purple',
+    'Dark Matter Purple Roads': 'dark-matter-purple-roads',
+    'Dark Matter Yellow Roads': 'dark-matter-yellow-roads',
+  };
 
   @override
   void initState() {
@@ -172,10 +198,44 @@ class _MapScreenState extends State<MapScreen> {
     }
   }
 
+  Future<void> _searchPlacesNearPoint() async {
+    if (selectedPoint == null || selectedCategory == null) return;
+    setState(() { isLoading = true; });
+
+    final url =
+        'https://api.geoapify.com/v2/places?categories=$selectedCategory'
+        '&filter=circle:${selectedPoint!.longitude},${selectedPoint!.latitude},1000'
+        '&limit=20'
+        '&apiKey=$apiKey';
+
+    final response = await http.get(Uri.parse(url));
+    if (response.statusCode == 200) {
+      final data = json.decode(response.body);
+      final features = data['features'] as List;
+      setState(() {
+        places = features.map((feature) => Place.fromJson(feature)).toList();
+        isLoading = false;
+      });
+    } else {
+      setState(() { isLoading = false; });
+      _showError('Error al cargar los lugares.');
+    }
+  }
+
   void _showError(String message) {
+    if (!mounted) return; // <- evita llamar si el widget no está montado
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text(message)),
     );
+  }
+
+  IconData getIconForCategory(String category) {
+    if (category.contains('restaurant')) return Icons.restaurant;
+    if (category.contains('cafe')) return Icons.local_cafe;
+    if (category.contains('hospital')) return Icons.local_hospital;
+    if (category.contains('attraction')) return Icons.camera_alt;
+    if (category.contains('supermarket')) return Icons.shopping_cart;
+    return Icons.location_on;
   }
 
   @override
@@ -193,13 +253,18 @@ class _MapScreenState extends State<MapScreen> {
               initialCenter: LatLng(currentPosition!.latitude, currentPosition!.longitude),
               initialZoom: 13.0,
               onTap: (tapPosition, point) {
-                // Si quieres que al tocar el mapa busque de la categoría seleccionada:
-                _searchPlacesByCategory(selectedCategory!);
+                setState(() {
+                  selectedPoint = point;
+                  places.clear();
+                  selectedCategory = null;
+                  routePoints.clear();
+                });
               },
             ),
             children: [
               TileLayer(
-                urlTemplate: 'https://maps.geoapify.com/v1/tile/osm-carto/{z}/{x}/{y}.png?apiKey=$apiKey',
+                // 3. Asegúrate de que tu TileLayer use la variable mapStyle:
+                urlTemplate: 'https://maps.geoapify.com/v1/tile/$mapStyle/{z}/{x}/{y}.png?apiKey=$apiKey',
                 userAgentPackageName: 'com.example.geoapify_app',
               ),
               MarkerLayer(
@@ -210,6 +275,13 @@ class _MapScreenState extends State<MapScreen> {
                     height: 60,
                     child: Icon(Icons.person_pin_circle, color: Colors.blue, size: 40),
                   ),
+                  if (selectedPoint != null)
+                    Marker(
+                      point: selectedPoint!,
+                      width: 60,
+                      height: 60,
+                      child: Icon(Icons.place, color: Colors.green, size: 40),
+                    ),
                   ...places.map((place) => Marker(
                     point: LatLng(place.lat, place.lon),
                     width: 80,
@@ -237,7 +309,7 @@ class _MapScreenState extends State<MapScreen> {
                           ),
                         );
                       },
-                      child: Icon(Icons.location_on, color: Colors.red),
+                      child: Icon(getIconForCategory(selectedCategory ?? ''), color: Colors.red),
                     ),
                   )),
                 ],
@@ -265,14 +337,50 @@ class _MapScreenState extends State<MapScreen> {
               child: Row(
                 children: categories.map((cat) {
                   final isSelected = selectedCategory == cat['key'];
+                  IconData icon;
+                  switch (cat['key']) {
+                    case 'catering.restaurant':
+                      icon = Icons.restaurant;
+                      break;
+                    case 'catering.cafe':
+                      icon = Icons.local_cafe;
+                      break;
+                    case 'healthcare.hospital':
+                      icon = Icons.local_hospital;
+                      break;
+                    case 'tourism.attraction':
+                      icon = Icons.camera_alt;
+                      break;
+                    case 'commercial.supermarket':
+                      icon = Icons.shopping_cart;
+                      break;
+                    default:
+                      icon = Icons.place;
+                  }
                   return Padding(
                     padding: const EdgeInsets.symmetric(horizontal: 4.0),
-                    child: ElevatedButton(
+                    child: ElevatedButton.icon(
+                      icon: Icon(icon, color: isSelected ? Colors.white : Colors.blueGrey),
+                      label: Text(
+                        cat['label']!,
+                        style: TextStyle(
+                          color: isSelected ? Colors.white : Colors.blueGrey,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
                       style: ElevatedButton.styleFrom(
-                        backgroundColor: isSelected ? Colors.blue : Colors.grey,
+                        backgroundColor: isSelected ? Colors.blue : Colors.white,
+                        elevation: isSelected ? 6 : 2,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(30),
+                          side: BorderSide(
+                            color: isSelected ? Colors.blue : Colors.blueGrey,
+                            width: 2,
+                          ),
+                        ),
+                        padding: EdgeInsets.symmetric(horizontal: 16, vertical: 10),
                       ),
                       onPressed: () => _searchPlacesByCategory(cat['key']!),
-                      child: Text(cat['label']!),
                     ),
                   );
                 }).toList(),
@@ -281,6 +389,44 @@ class _MapScreenState extends State<MapScreen> {
           ),
           if (isLoading)
             Center(child: CircularProgressIndicator()),
+          // 2. En tu build(), agrega el menú en la parte superior derecha:
+          Positioned(
+            bottom: 20,
+            left: 0,
+            right: 0,
+            child: Center(
+              child: Container(
+                padding: EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                decoration: BoxDecoration(
+                  color: Colors.white.withOpacity(0.95),
+                  borderRadius: BorderRadius.circular(12),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black12,
+                      blurRadius: 6,
+                      offset: Offset(0, 2),
+                    ),
+                  ],
+                ),
+                child: DropdownButtonHideUnderline(
+                  child: DropdownButton<String>(
+                    value: mapStyle,
+                    items: mapStyles.entries.map((entry) {
+                      return DropdownMenuItem(
+                        value: entry.value,
+                        child: Text(entry.key, style: TextStyle(fontSize: 15)),
+                      );
+                    }).toList(),
+                    onChanged: (value) {
+                      setState(() {
+                        mapStyle = value!;
+                      });
+                    },
+                  ),
+                ),
+              ),
+            ),
+          ),
         ],
       ),
       floatingActionButton: Column(
@@ -312,6 +458,14 @@ class _MapScreenState extends State<MapScreen> {
               }
             },
             child: Icon(Icons.my_location),
+          ),
+          FloatingActionButton(
+            heroTag: 'searchPlaces',
+            onPressed: (selectedPoint != null && selectedCategory != null)
+                ? () => _searchPlacesNearPoint()
+                : null,
+            child: Icon(Icons.search),
+            tooltip: 'Buscar lugares cercanos',
           ),
         ],
       ),
